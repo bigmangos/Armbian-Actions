@@ -23,16 +23,6 @@ on:
           - 'edge'
           - 'vendor'
           - 'flippy'
-      CPUTHREADS:
-        description: 'CPU Therads'
-        default: '4'
-        required: true
-        type: choice
-        options:
-          - '1'
-          - '2'
-          - '3'
-          - '4'
 
 env:
   TZ: Asia/Shanghai
