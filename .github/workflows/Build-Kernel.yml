@@ -26,12 +26,11 @@ on:
 
 env:
   TZ: Asia/Shanghai
+  BRANCH: ${{ inputs.BRANCH }}
 
 jobs:
   Build-Kernel:
     runs-on: ubuntu-24.04-arm
-    env:
-      BRANCH: ${{ inputs.BRANCH }}
     steps:
       - name: Check input combination
         run: |
@@ -74,7 +73,7 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android 2>/dev/null
           sudo swapoff -a
           sudo rm -f /swapfile /mnt/swapfile
-          sudo -E apt-get -y purge azure-cli ghc* zulu* llvm* firefox google* dotnet* openjdk* mysql* php* mongodb* dotnet* moby* snapd* android* || true
+          sudo -E apt-get -y purge azure-cli ghc* zulu* llvm* firefox google* dotnet* openjdk* mysql* php* mongodb* moby* snapd* android* || true
           sudo -E apt-get -qq autoremove --purge
           sudo -E apt-get -qq clean
           sudo -E apt-get clean
@@ -98,7 +97,7 @@ jobs:
           sudo mkfs.xfs /dev/github/runner
           sudo mkdir -p /mnt/workdir
           sudo mount /dev/github/runner /mnt/workdir
-          sudo chown ${USER}:${GROUPS} /mnt/workdir
+          sudo chown -R ${USER}:${USER} /mnt/workdir
           df -Th
 
       - name: Download source code
