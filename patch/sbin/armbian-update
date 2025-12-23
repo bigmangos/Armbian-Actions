@@ -36,7 +36,7 @@ LINUXFAMILY=$(grep "^LINUXFAMILY=" ${release_file} | cut -d'=' -f2) || error "�
 
 # 显示用法
 usage() {
-    echo -e "${INFO} 使用方法：[-k <version>] [-u <repo>] [-f ] [-l] [-n <num>] [-p <prefix>] [-h]"
+    echo -e "${INFO} 使用方法：[-k <version>] [-u <repo>] [-f] [-l] [-p <prefix>] [-n <num>] [-h]"
     echo -e "${INFO} 参数说明："
     echo -e "${INFO}   -k <version>    指定要安装的内核版本，格式为 x.y.z"
     echo -e "${INFO}   -u <repo>       指定 GitHub 仓库"
@@ -262,9 +262,9 @@ download_kernel_package() {
     DOWNLOAD_SHA_URL="${PROXY_URL}https://github.com/${GITHUB_REPO}/Armbian-Actions/releases/download/Kernel-${LINUXFAMILY}/sha256.txt"
     cd "${TEMP_DIR}" || exit
     echo -e "${STEPS} 正在下载文件：[\033[92m ${KERNEL_VERSION}-${LINUXFAMILY} \033[0m]"
-    wget -q -O "kernel-${KERNEL_VERSION}-${LINUXFAMILY}.tar.gz" "${DOWNLOAD_URL}" >/dev/null 2>&1 || error "下载失败，请检查版本号或网络连接！"
+    wget --tries=3 --retry-connrefused --waitretry=1 -q -O "kernel-${KERNEL_VERSION}-${LINUXFAMILY}.tar.gz" "${DOWNLOAD_URL}" >/dev/null 2>&1 || error "下载失败，请检查版本号或网络连接！"
     echo -e "${STEPS} 正在下载文件：[\033[92m sha256.txt \033[0m]"
-    wget -q -O "sha256.txt" "${DOWNLOAD_SHA_URL}" >/dev/null 2>&1 || error "下载失败，请检查版本号或网络连接！"
+    wget --tries=3 --retry-connrefused --waitretry=1 -q -O "sha256.txt" "${DOWNLOAD_SHA_URL}" >/dev/null 2>&1 || error "下载失败，请检查版本号或网络连接！"
     echo -e "${SUCCESS} 下载完成！"
     expected_sha=$(grep "kernel-${KERNEL_VERSION}-${LINUXFAMILY}.tar.gz" sha256.txt | awk '{print $2}')
     [[ -z "${expected_sha}" ]] && error "sha256.txt 中未找到对应版本条目！"
