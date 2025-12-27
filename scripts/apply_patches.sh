@@ -12,7 +12,7 @@ fi
 
 # Add Flippy BRANCH
 if [[ "${BRANCH}" =~ ^(flippy)$ ]]; then
-  echo "Adding Flippy branch..."
+  echo "Adding flippy branch..."
   sed -i '0,/case \$BRANCH in/{
 	/case \$BRANCH in/a\
 	flippy)\
