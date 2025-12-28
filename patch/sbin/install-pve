@@ -1,12 +1,12 @@
 #!/bin/bash
-# ==========================================================================================
+# =============================================================================
 #  脚本名称：install-pve
 #  适用架构：ARM64 (aarch64/arm64)
 #  脚本功能：Armbian ARM64 系统安装 Pxvirt (Proxmox VE)
 #  适用系统：Debian 12 (bookworm) → Pxvirt 8 | Debian 13 (trixie) → Pxvirt 9
-#  功能说明：配置国内源、设置静态网络、添加 Pxvirt 源并安装、内存占用优化、配置网桥及配置 IPV6 参数
+#  功能说明：配置国内源、添加 Pxvirt 源并安装、内存占用优化、配置网桥及配置 IPV6 参数
 #  教程链接：https://zhou.pp.ua
-# ==========================================================================================
+# =============================================================================
 set -e
 
 # ========== 字体颜色 ==========
@@ -42,37 +42,65 @@ check_env() {
 
 # ========== 函数定义 ==========
 check_select_interface() {
-  NET_IF_LIST=$(ip route | grep '^default' | grep -oP 'dev\s+\K\S+' | sort -u)
-  if [[ -z "${NET_IF_LIST}" ]]; then
-    error "无法识别默认网卡，请检查网络！"
-  fi
-
+  NET_IF_LIST=$(ip route | awk '/^default/ {for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | sort -u)
+  [[ -z "${NET_IF_LIST}" ]] && error "未找到默认网络接口，请检查网络配置！"
+  # 初始化数组
+  VALID_IF_LIST=()
+  VALID_INDEX=()
+  # 判断是否为 bridge 网络接口
+  is_bridge_or_member() {
+      ip -d link show "$1" | grep -Eq "bridge|brport"
+  }
+  # 多默认接口
   if [[ $(echo "${NET_IF_LIST}" | wc -l) -gt 1 ]]; then
-    echo -e "${OPTIONS} 检测到多个默认网卡，请选择："
+    echo -e "${OPTIONS} 检测到多个默认网络接口，请选择："
     i=1
     for iface in ${NET_IF_LIST}; do
-      ip_addr=$(ip -4 addr show "$iface" | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n1)
-      echo -e "${SN} [\033[96m ${i} \033[0m] -> ${iface} - ${ip_addr:-无IP}"
+      ip_addr=$(ip -4 addr show "${iface}" | awk '/inet /{print $2}' | cut -d/ -f1 | head -n1)
+      if is_bridge_or_member "${iface}"; then
+        mark="[\033[91m ✘ \033[0m]"
+        color="\033[91m"
+        comment="[ 属于桥接设备，禁止使用 ]"
+        selectable="no"
+      else
+        mark="[\033[92m ✔ \033[0m]"
+        color="\033[92m"
+        comment=""
+        selectable="yes"
+      fi
+      echo -e "${SN} [\033[96m ${i} \033[0m] -> [${color} ${iface} - ${ip_addr:-无IP} \033[0m] ${mark} ${comment}"
+      # 只记录可用的接口编号和名称
+      if [[ "${selectable}" == "yes" ]]; then
+        VALID_IF_LIST+=("${iface}")
+        VALID_INDEX+=("${i}")
+      fi
       i=$((i+1))
     done
-
-  while true; do
-    read -p "$(echo -e "${OPTIONS} 请输入序号 [\033[96m 1-$((i-1)) \033[0m]：")" SN_CHOICE
-    SN_CHOICE=${SN_CHOICE:-1}
-    if [[ "${SN_CHOICE}" =~ ^[0-9]+$ ]] && (( SN_CHOICE >= 1 && SN_CHOICE <= i-1 )); then
-      NET_IF=$(echo "${NET_IF_LIST}" | sed -n "${SN_CHOICE}p")
-      break
-    else
-      echo -e "${ERROR} 无效输入，重新输入！"
+    # 若无可用接口
+    if [[ ${#VALID_IF_LIST[@]} -eq 0 ]]; then
+      error "所有默认网络接口均不可用，请调整后重试！"
     fi
-  done
-  else
-    NET_IF="${NET_IF_LIST}"
-    echo -e "${INFO} 检测到默认网卡：[\033[92m ${NET_IF} \033[0m]"
-  fi
+    # 选择接口
+    while true; do
+      read -p "$(echo -e "${OPTIONS} 请输入序号：")" SN_CHOICE
+      SN_CHOICE=${SN_CHOICE:-1}
 
-  if ip -d link show "${NET_IF}" | grep -q "bridge"; then
-    error "默认网卡 [\033[91m ${NET_IF} \033[0m] 是桥接设备，请恢复后重试！"
+      for idx in "${!VALID_INDEX[@]}"; do
+        if [[ "${SN_CHOICE}" == "${VALID_INDEX[$idx]}" ]]; then
+          NET_IF="${VALID_IF_LIST[$idx]}"
+          break 2
+        fi
+      done
+      echo -e "${ERROR} 输入无效或该接口不可使用，请重新输入！"
+    done
+  else
+    # 单默认接口
+    NET_IF="${NET_IF_LIST}"
+    ip_addr=$(ip -4 addr show "${NET_IF}" | awk '/inet /{print $2}' | cut -d/ -f1 | head -n1)
+    if is_bridge_or_member "${NET_IF}"; then
+      error "默认网络接口 [\033[91m ${NET_IF} \033[0m] 属于桥接设备，请调整后重试！"
+    fi
+    echo -e "${INFO} 检测到默认网络接口：[\033[92m ${NET_IF} - ${ip_addr:-无IP} \033[0m]"
   fi
 }
 
