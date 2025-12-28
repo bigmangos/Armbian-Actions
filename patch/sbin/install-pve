@@ -28,12 +28,10 @@ check_env() {
   if [[ "$(id -u)" -ne 0 ]]; then
     error "请使用 root 用户运行！"
   fi
-
   source /etc/os-release
   if [[ ! "${VERSION_CODENAME}" =~ ^(bookworm|trixie)$ ]]; then
     error "当前系统 [\033[91m ${VERSION_CODENAME} \033[0m] 不支持！"
   fi
-
   ARCH=$(uname -m)
   if [[ ! "${ARCH}" =~ ^(aarch64|arm64)$ ]]; then
     error "当前架构 [\033[91m ${ARCH} \033[0m] 非 ARM64 架构！"
@@ -104,6 +102,45 @@ check_select_interface() {
   fi
 }
 
+detect_network_info() {
+  [[ -z "${NET_IF}" ]] && error "未检测到有效的网络接口！"
+  ADDR_INFO=$(ip -4 addr show "${NET_IF}" | awk '/inet / {print $2; exit}')
+  IP_ADDR=${ADDR_INFO%/*}
+  CIDR=${ADDR_INFO#*/}
+  GATEWAY=$(ip route | awk -v iface="${NET_IF}" '$1=="default" && $0~("dev "iface) {print $3; exit}')
+  MAC_ADDR=$(cat "/sys/class/net/${NET_IF}/address" 2>/dev/null)
+  [[ -n "${CIDR}" ]] && NETMASK=$(cidr_to_netmask "${CIDR}")
+  if [[ -z "${IP_ADDR}" || -z "${GATEWAY}" || -z "${CIDR}" || -z "${NETMASK}" ]]; then
+    error "获取网络信息失败，请检查接口 ${NET_IF} 是否配置 IPv4！"
+  fi
+  echo -e "${INFO} 接口：\033[95m${NET_IF}\033[0m"
+  echo -e "${INFO} IPv4：\033[95m${IP_ADDR}\033[0m"
+  echo -e "${INFO} 网关：\033[95m${GATEWAY}\033[0m"
+  echo -e "${INFO} 掩码：\033[95m${NETMASK}\033[0m"
+  echo -e "${INFO} MAC ：\033[95m${MAC_ADDR}\033[0m"
+}
+
+cidr_to_netmask() {
+  local cidr=${1}
+  if [[ -z "${cidr}" || "${cidr}" -le 0 || "${cidr}" -gt 32 ]]; then
+    error "子网掩码位数无效！"
+  fi
+  local i mask=""
+  local full_octets=$((cidr / 8))
+  local remainder=$((cidr % 8))
+  for ((i = 0; i < 4; i++)); do
+    if ((i < full_octets)); then
+      mask+=255
+    elif ((i == full_octets)); then
+      mask+=$((256 - 2**(8 - remainder)))
+    else
+      mask+=0
+    fi
+    [[ ${i} -lt 3 ]] && mask+=.
+  done
+  echo "${mask}"
+}
+
 confirm_source() {
   echo -e "${INFO} 请确认系统已更换为国内镜像软件源！"
   echo -e "${INFO} 网络环境可以稳定访问官方源，可忽略！"
@@ -143,7 +180,6 @@ backup_and_comment_sources() {
       echo -e "${STEPS} 已注释：\033[95m${FILE}\033[0m"
     fi
   done
-
   if [ -f /etc/apt/sources.list ]; then
     FILE=/etc/apt/sources.list.d/debian.sources
     BAK="${FILE}.bak"
@@ -230,38 +266,6 @@ setup_networking() {
   systemctl disable --now NetworkManager 2>/dev/null || true
 }
 
-detect_network_info() {
-  IP_ADDR=$(ip -4 addr show "${NET_IF}" | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n1)
-  GATEWAY=$(ip route | grep '^default' | grep "dev ${NET_IF}" | awk '{print $3}' | head -n1)
-  CIDR=$(ip -4 addr show "${NET_IF}" | grep -oP '(?<=inet\s)\d+(\.\d+){3}/\d+' | head -n1 | cut -d'/' -f2)
-  MAC_ADDR=$(cat "/sys/class/net/${NET_IF}/address" 2>/dev/null)
-
-  if [[ -z "${IP_ADDR}" || -z "${GATEWAY}" || -z "${CIDR}" ]]; then
-    error "获取网络参数失败！"
-  fi
-}
-
-cidr_to_netmask() {
-  local cidr=${1}
-  if [[ -z "${cidr}" || "${cidr}" -le 0 || "${cidr}" -gt 32 ]]; then
-    error "子网掩码位数无效！"
-  fi
-  local i mask=""
-  local full_octets=$((cidr / 8))
-  local remainder=$((cidr % 8))
-  for ((i = 0; i < 4; i++)); do
-    if ((i < full_octets)); then
-      mask+=255
-    elif ((i == full_octets)); then
-      mask+=$((256 - 2**(8 - remainder)))
-    else
-      mask+=0
-    fi
-    [[ ${i} -lt 3 ]] && mask+=.
-  done
-  echo "${mask}"
-}
-
 set_hostname() {
   local CURRENT_HOSTNAME NEW_HOSTNAME_CHOICE
   CURRENT_HOSTNAME=$(tr -d ' \t\n\r' < /etc/hostname)
@@ -294,7 +298,6 @@ EOF
 search lan
 nameserver ${GATEWAY}
 EOF
-
   CURRENT_HOSTNAME=$(tr -d ' \t\n\r' < /etc/hostname)
   echo -e "${STEPS} 配置 \033[95m/etc/hosts\033[0m"
   cat <<EOF > /etc/hosts
@@ -361,22 +364,18 @@ for svc in "${SERVICES[@]}"; do
 done
 echo "All down!!!"
 EOF
-
     chmod +x /usr/sbin/pve-optimize.sh
-
     if [[ -f /etc/rc.local ]]; then
       grep -q '/usr/sbin/pve-optimize.sh' /etc/rc.local || \
       sed -i '/^exit 0/i sleep 300 \&\& /usr/sbin/pve-optimize.sh' /etc/rc.local
     else
       echo -e "${INFO} /etc/rc.local 不存在，跳过插入命令！"
     fi
-
     FILES=(
       /usr/share/perl5/PVE/Service/pveproxy.pm
       /usr/share/perl5/PVE/Service/pvedaemon.pm
       /usr/share/perl5/PVE/Service/spiceproxy.pm
     )
-
     for file in "${FILES[@]}"; do
       if [[ -f "${file}" ]] && grep -q 'max_workers\s*=>\s*3' "${file}"; then
         sed -i 's|max_workers\s*=>\s*3|max_workers => 1|' "${file}"
@@ -385,7 +384,6 @@ EOF
         echo -e "${STEPS} 已跳过：\033[95m${file}\033[0m"
       fi
     done
-
     echo -e "${SUCCESS} 内存优化完成！"
   else
     echo -e "${INFO} 已跳过内存优化！"
@@ -395,10 +393,8 @@ EOF
 create_vmbr0() {
   read -p "$(echo -e "${OPTIONS} 是否创建网桥？[\033[92mY\033[0m/n]：")" CREATE_BRIDGE_CHOICE
   CREATE_BRIDGE_CHOICE=${CREATE_BRIDGE_CHOICE:-y}
-
   if [[ "${CREATE_BRIDGE_CHOICE}" =~ ^[Yy]$ ]]; then
     echo -e "${STEPS} 配置 \033[95m/etc/network/interfaces\033[0m"
-
     cat <<EOF > /etc/network/interfaces
 auto lo
 iface lo inet loopback
@@ -415,11 +411,9 @@ iface vmbr0 inet static
     bridge-stp off
     bridge-fd 0
 EOF
-
     if [[ "${VERSION_CODENAME}" == "trixie" ]]; then
-        grep -qxF "source /etc/network/interfaces.d/sdn" /etc/network/interfaces || sed -i '1i source /etc/network/interfaces.d/sdn' /etc/network/interfaces
+      grep -qxF "source /etc/network/interfaces.d/sdn" /etc/network/interfaces || sed -i '1i source /etc/network/interfaces.d/sdn' /etc/network/interfaces
     fi
-
     echo -e "${SUCCESS} 网桥 vmbr0 配置已写入！"
     configure_ipv6_sysctl
   else
@@ -429,7 +423,6 @@ EOF
 
 configure_ipv6_sysctl() {
   echo -e "${INFO} 开始配置 IPv6 参数..."
-
   add_or_update_sysctl_param() {
     local KEY=${1}
     local VALUE=${2}
@@ -472,11 +465,11 @@ prompt_reboot() {
 # ========== 主流程 ==========
 check_env
 check_select_interface
+detect_network_info
 confirm_source
 backup_and_comment_sources
 setup_repositories
 setup_networking
-detect_network_info
 set_hostname
 configure_network
 install_pve
